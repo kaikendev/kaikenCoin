@@ -34,12 +34,16 @@ contract('KaikenToken', async function ([creator, other]) {
     expect(await this.token.symbol()).to.be.equal(SYMBOL)
   })
 
-  it('assigns the initial total supply to the creator', async function () {
-    expect(await this.token.balanceOf(creator)).to.be.bignumber.equal(TOTAL_SUPPLY)
+  it('should return some initialized exempts', async function () {
+    let reserve = await this.token.getReserve()
+    let uniswapv2Router02 = '0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D'
+    expect(await this.token.getExempt(reserve)).to.be.true
+    expect(await this.token.getExempt(uniswapv2Router02)).to.be.true
+    expect(await this.token.getExempt(creator)).to.be.false
   })
 
-  it('should update return the reserve account', async function () {
-    let tx = await this.token.updateReserve(other)
+  it('should update and return the reserve account', async function () {
+    await this.token.updateReserve(other)
     expect(await this.token.getReserve()).to.be.equal(other)
   })
 
@@ -48,23 +52,9 @@ contract('KaikenToken', async function ([creator, other]) {
     let tx = await this.token.updateStartingTaxes(startingTaxes)
     await truffleAssert.eventEmitted(tx, 'UpdatedStartingTaxes', (ev) => {
       let taxes = ev.startingTaxes.map(tax => parseInt(tax.toString()))
-      let reducedTaxes = taxes.reduce((acc, currentValue) => acc * currentValue)
-      let reducedStartingTaxes = startingTaxes.reduce((acc, currentValue) => acc * currentValue)
-      return reducedTaxes == reducedStartingTaxes
-    })
-  })
-
-  it('should update and return the reduction step', async function () {
-    let tx = await this.token.updateTaxReductionStep(2)
-    await truffleAssert.eventEmitted(tx, 'UpdatedTaxReductionStep', (ev) => {
-      return ev.taxReductionStep == 2
-    })
-  })
-
-  it('should update and return the max tax reductions', async function () {
-    let tx = await this.token.updateMaxTaxReductions(10)
-    await truffleAssert.eventEmitted(tx, 'UpdatedMaxTaxReductions', (ev) => {
-      return ev.maxTaxReductions == 10
+      let reducedTaxesProduct = taxes.reduce((acc, currentValue) => acc * currentValue)
+      let reducedStartingTaxesProduct = startingTaxes.reduce((acc, currentValue) => acc * currentValue)
+      return reducedTaxesProduct == reducedStartingTaxesProduct
     })
   })
 
@@ -95,12 +85,12 @@ contract('KaikenToken', async function ([creator, other]) {
   })
 
   it('should set a genesis tax record', async function () {
-    let tx = await this.token.sandboxSetGenesisTaxRecord(other, 2)
+    let tx = await this.token.sandboxSetGenesisTaxRecord(other, 20)
     await truffleAssert.eventEmitted(tx, 'SandboxTaxRecordSet', (ev) => {
       return (
-        ev._addr == other &&
+        ev.addr == other &&
         ev.timestamp <= Date.now() &&
-        ev.taxReductions == 2
+        ev.tax == 20
       )
     })
   })

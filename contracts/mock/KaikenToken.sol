@@ -9,14 +9,15 @@ contract KaikenToken is ERC20 {
     using SafeMath for uint;
 
     address owner;
-    address private reserve = 0x3FEE83b4a47D4D6425319A09b91C0559DDF9E31C; // My Sola ETH Account
+    address private reserve = 0x3FEE83b4a47D4D6425319A09b91C0559DDF9E31C; //0xFe76451745386702e091113170b703096dC9E024;
 
     uint transferMode;
     uint[] startingTaxes = [
-        25,
+        5,
+        10,
+        15,
+        20,
         30,
-        35,
-        40,
         45
     ];
 
@@ -28,14 +29,11 @@ contract KaikenToken is ERC20 {
         50
     ];
 
-    uint taxReductionStep = 1;
-    uint maxTaxReductions = 24;
-    uint taxReductionCadence = 31; 
-
     //structs 
     struct TaxRecord {
         uint timestamp;
-        uint taxReductions;
+        uint tax;
+        uint balance;
     }
 
     // constants 
@@ -46,8 +44,8 @@ contract KaikenToken is ERC20 {
 
     // mappings
     mapping(address => bool) exempts;
-    mapping(address => TaxRecord) genesis;
-    mapping(address => TaxRecord) sandboxGenesis;
+    mapping(address => TaxRecord[]) genesis;
+    mapping(address => TaxRecord[]) sandboxGenesis;
 
     //modifiers
     modifier onlyOwner {
@@ -59,20 +57,14 @@ contract KaikenToken is ERC20 {
     event RemovedExempt(address exempted);
     event UpdatedExempt(address exempted, bool isValid);
     event UpdatedReserve(address reserve);
-    event UpdatedTaxReductionCadence(uint cadence);
-    event TaxReduced(
-        address accountLiable, 
-        uint now
-    );
-    event TaxRecordSet(address _addr, uint timestamp, uint taxReductions);
+    event TaxRecordSet(address _addr, uint timestamp, uint balance, uint tax);
     event UpdatedStartingTaxes(uint[] startingTaxes);
-    event UpdatedTaxReductionStep(uint taxReductionStep);
-    event UpdatedMaxTaxReductions(uint maxTaxReductions);
     event UpdatedThresholds(uint[] thresholds);
+    event InitializedExempts(uint initialized);
     event GotTax(address msgSender, uint sentAmount, uint balanceOfSenderOrFrom, uint percentageTransferred , uint taxPercentage);
 
     // sandbox events
-    event SandboxTaxRecordSet(address _addr, uint timestamp, uint taxReductions);
+    event SandboxTaxRecordSet(address addr, uint timestamp, uint balance, uint tax);
 
     constructor(
         string memory _name,
@@ -80,6 +72,7 @@ contract KaikenToken is ERC20 {
     ) public ERC20(_name, _symbol) {
         owner = msg.sender;
         _mint(owner, TOTAL_SUPPLY * (10 ** uint256(decimals())));
+        _initializeExempts();
     }
 
     // Overrides
@@ -117,39 +110,10 @@ contract KaikenToken is ERC20 {
         return reserve;
     }
 
-    function getTaxReductionCadence() public view returns(uint) {
-        return taxReductionCadence;
-    }
-
-    function getMaxTaxReductions() public view returns(uint) {
-        return maxTaxReductions;
-    }
-
-    function getTaxReductionsFromGenesis(address _addr) public view returns(uint) {
-        return genesis[_addr].taxReductions;
-    }
-
-    function isDueForTaxReduction(address accountLiable) public view returns(bool) {
-        return (
-            genesis[accountLiable].taxReductions <= maxTaxReductions &&
-            (block.timestamp <= genesis[accountLiable].timestamp.add(taxReductionCadence * 1 days))
-        );
-    }
-
     // Writes
     function updateStartingTaxes(uint[] memory _startingTaxes) public onlyOwner {
         startingTaxes = _startingTaxes;
         emit UpdatedStartingTaxes(startingTaxes);
-    }
-
-    function updateTaxReductionStep(uint _step) public onlyOwner {
-        taxReductionStep = _step;
-        emit UpdatedTaxReductionStep(taxReductionStep);
-    }
-
-    function updateMaxTaxReductions(uint _maxTaxReductions) public onlyOwner {
-        maxTaxReductions = _maxTaxReductions;
-        emit UpdatedMaxTaxReductions(maxTaxReductions);
     }
 
     function updateThresholds(uint[] memory _thresholds) public onlyOwner {
@@ -183,12 +147,20 @@ contract KaikenToken is ERC20 {
         emit RemovedExempt(_exempted);
     }
 
-    function updateTaxReductionCadence(uint _taxReductionCadence) public onlyOwner {
-        taxReductionCadence = _taxReductionCadence;
-        emit UpdatedTaxReductionCadence(taxReductionCadence);
-    }
-
     // internal functions
+    function _initializeExempts() internal {
+        // initialize the following exempts: 
+        // These accounts are exempted from taxation
+        exempts[reserve] = true;
+        exempts[0xf164fC0Ec4E93095b804a4795bBe1e041497b92a] = true; // UniswapV1Router01
+        exempts[0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D] = true; // UniswapV2Router02
+        exempts[0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F] = true; // Sushiswap: Router
+        exempts[0xdb38ae75c5F44276803345f7F02e95A0aeEF5944] = true; // 1inch
+        exempts[0xBA12222222228d8Ba445958a75a0704d566BF2C8] = true; // Balancer Vault
+
+        emit InitializedExempts(1);
+    } 
+
     function _getTaxPercentage(
         address _from,
         uint _sentAmount
@@ -217,30 +189,13 @@ contract KaikenToken is ERC20 {
             taxPercentage = startingTaxes[2];
         }else if (percentageTransferred <= thresholds[3]) {
             taxPercentage = startingTaxes[3];
-        } else {
+        } else if (percentageTransferred <= thresholds[4]) {
             taxPercentage = startingTaxes[4];
-        }
-
-        if (genesis[accountLiable].timestamp == 0) {
-            _setGenesisTaxRecord(accountLiable, 0);
-        }
-
-        bool isDue = isDueForTaxReduction(accountLiable);
-
-        if (isDue) {
-            genesis[accountLiable] = TaxRecord({ 
-                timestamp: block.timestamp,
-                taxReductions: genesis[accountLiable].taxReductions++
-            });
-            _setGenesisTaxRecord(accountLiable, genesis[accountLiable].taxReductions++);
-            emit TaxReduced(
-                accountLiable,
-                block.timestamp
-            );
+        } else {
+            taxPercentage = startingTaxes[5];
         }
         
-        taxPercentage = taxPercentage.sub(genesis[accountLiable].taxReductions.mul(taxReductionStep));
-        
+        _setGenesisTaxRecord(accountLiable, taxPercentage);
         emit GotTax(_from, _sentAmount, balanceOfSenderOrFrom, percentageTransferred, taxPercentage);
         return taxPercentage;
     }
@@ -256,14 +211,15 @@ contract KaikenToken is ERC20 {
 
     function _setGenesisTaxRecord(
         address _addr, 
-        uint _taxReductions
+        uint _tax
         ) internal {
         uint timestamp = block.timestamp;
-        genesis[_addr] = TaxRecord({ 
+        genesis[_addr].push(TaxRecord({ 
             timestamp: timestamp,
-            taxReductions: _taxReductions
-        });
-        emit TaxRecordSet(_addr, timestamp, _taxReductions);
+            tax: _tax,
+            balance: balanceOf(_addr)
+        }));
+        emit TaxRecordSet(_addr, timestamp, balanceOf(_addr), _tax);
     }
 
     function _internalTransfer(
@@ -290,22 +246,16 @@ contract KaikenToken is ERC20 {
     }
 
     // Sandbox functions
-    function sandboxIsDueForTaxReduction(address accountLiable) public view returns(bool) {
-        return (
-            sandboxGenesis[accountLiable].taxReductions <= maxTaxReductions &&
-            (block.timestamp <= sandboxGenesis[accountLiable].timestamp.add(taxReductionCadence * 1 days))
-        );
-    }
-    
     function sandboxSetGenesisTaxRecord(
-        address _addr, 
-        uint _taxReductions
+        address addr, 
+        uint _tax
         ) public {
         uint timestamp = block.timestamp;
-        sandboxGenesis[_addr] = TaxRecord({ 
+        sandboxGenesis[addr].push(TaxRecord({ 
             timestamp: timestamp,
-            taxReductions: _taxReductions
-        });
-        emit SandboxTaxRecordSet(_addr, timestamp, _taxReductions);
+            tax: _tax,
+            balance: balanceOf(addr)
+        }));
+        emit SandboxTaxRecordSet(addr, timestamp, balanceOf(addr), _tax);
     }
 }

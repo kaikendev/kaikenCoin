@@ -1,5 +1,5 @@
 const HDWalletProvider = require('truffle-hdwallet-provider')
-const { projectId, efMnemonic, liveMnemonic } = require('./secrets.json')
+const { projectId, mnemonic } = require('./secrets.json')
 const Web3 = require('web3')
 const web3 = new Web3()
 
@@ -64,7 +64,7 @@ module.exports = {
     // Useful for deploying to a public network.
     // NB: It's important to wrap the provider as a function.
     ropsten: {
-      provider: () => new HDWalletProvider(efMnemonic, `https://ropsten.infura.io/v3/${projectId}`),
+      provider: () => new HDWalletProvider(mnemonic, `https://ropsten.infura.io/v3/${projectId}`),
       network_id: 3, // Ropsten's id
       gas: 5500000, // Ropsten has a lower block limit than mainnet
       confirmations: 2, // # of confs to wait between deployments. (default: 0)
@@ -73,7 +73,7 @@ module.exports = {
     },
     // Useful for private networks
     kovan: {
-      provider: () => new HDWalletProvider(efMnemonic, `https://kovan.infura.io/v3/${projectId}`),
+      provider: () => new HDWalletProvider(mnemonic, `https://kovan.infura.io/v3/${projectId}`),
       network_id: 42, // Ropsten's id
       gas: 5500000, // Ropsten has a lower block limit than mainnet
       confirmations: 2, // # of confs to wait between deployments. (default: 0)
@@ -81,7 +81,7 @@ module.exports = {
       skipDryRun: true // Skip dry run before migrations? (default: false for public nets )
     },
     live: {
-      provider: () => new HDWalletProvider(liveMnemonic, `https://mainnet.infura.io/v3/${projectId}`),
+      provider: () => new HDWalletProvider(mnemonic, `https://mainnet.infura.io/v3/${projectId}`),
       network_id: 1,
       gasPrice: web3.utils.toWei('70', 'gwei')
     }
