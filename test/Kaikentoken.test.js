@@ -34,11 +34,27 @@ contract('KaikenToken', async function ([creator, other]) {
     expect(await this.token.symbol()).to.be.equal(SYMBOL)
   })
 
+  it('should have minted tokens to some addresses', async function () {
+    let investors = '0x456ee95063e52359530b9702C9A3d1EEB46864A7'
+    let exchanges = '0xa611d21b868f2A1d9Cfb383152DC3483Ea15F81F'
+    let marketing = '0x085BA6bef0b3fEACf2D4Cb3Dba5CA11520E2AD01'
+    let reserve = '0x3FEE83b4a47D4D6425319A09b91C0559DDF9E31C'
+
+    expect(await this.token.balanceOf(creator)).to.be.bignumber.greaterThan('0')
+    expect(await this.token.balanceOf(reserve)).to.be.bignumber.greaterThan('0')
+    expect(await this.token.balanceOf(investors)).to.be.bignumber.greaterThan('0')
+    expect(await this.token.balanceOf(exchanges)).to.be.bignumber.greaterThan('0')
+    expect(await this.token.balanceOf(marketing)).to.be.bignumber.greaterThan('0')
+  })
+
   it('should return some initialized exempts', async function () {
     let reserve = await this.token.getReserve()
     let uniswapv2Router02 = '0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D'
     expect(await this.token.getExempt(reserve)).to.be.true
     expect(await this.token.getExempt(uniswapv2Router02)).to.be.true
+  })
+
+  it('creator should be not be exempted from taxation', async function () {
     expect(await this.token.getExempt(creator)).to.be.false
   })
 
@@ -48,7 +64,7 @@ contract('KaikenToken', async function ([creator, other]) {
   })
 
   it('should update and return the starting taxes', async function () {
-    let startingTaxes = [1, 2, 3, 5, 10]
+    let startingTaxes = [1, 2, 3, 5, 10, 15, 20]
     let tx = await this.token.updateStartingTaxes(startingTaxes)
     await truffleAssert.eventEmitted(tx, 'UpdatedStartingTaxes', (ev) => {
       let taxes = ev.startingTaxes.map(tax => parseInt(tax.toString()))
@@ -85,7 +101,7 @@ contract('KaikenToken', async function ([creator, other]) {
   })
 
   it('should set a genesis tax record', async function () {
-    let tx = await this.token.sandboxSetGenesisTaxRecord(other, 20)
+    let tx = await this.token.sandboxSetTaxRecord(other, 20)
     await truffleAssert.eventEmitted(tx, 'SandboxTaxRecordSet', (ev) => {
       return (
         ev.addr == other &&
@@ -95,17 +111,14 @@ contract('KaikenToken', async function ([creator, other]) {
     })
   })
 
-  it('should emit a `GotTax` event with percentageTransferred and taxPercentage', async function () {
-    let sentAmount = '500000000000000000000000000'
-    let tx = await this.token.transfer(other, sentAmount)
-
-    await truffleAssert.eventEmitted(tx, 'GotTax', (ev) => {
-      return (
-        ev.taxPercentage < 50 &&
-        ev.percentageTransferred < 10
-      )
-    })
+  it('should successfully approve the spender `other`', async function () {
+    let { tx, receipt } = await this.token.approve(other, 100000000)
+    expect(tx).to.have.string('0x')
+    expect(receipt.transactionHash).to.have.string('0x')
   })
+
+  // The following tests involve transfers, and would fail UNLESS the Owner/Creator
+  // is not timelocked.
 
   it('should transfer tokens successfully', async function () {
     let initialBalCreator = await this.token.balanceOf(creator)
@@ -118,24 +131,68 @@ contract('KaikenToken', async function ([creator, other]) {
     expect(await this.token.balanceOf(other)).to.be.bignumber.greaterThan(initialBalOther)
   })
 
-  it('should credit the kR after transfer is invoked', async function () {
+  it('should credit the kR after transfer is invoked from a non-exempted account and update genesis tax record', async function () {
     let reserveAddr = await this.token.getReserve()
     let initialBalOther = await this.token.balanceOf(other)
     let initialBalCreator = await this.token.balanceOf(creator)
     let initialBalReserveAddr = await this.token.balanceOf(reserveAddr)
 
-    let { receipt } = await this.token.transfer(other, 100 * Math.pow(10, 8))
+    let exemptStatusBeforeTransfer = await this.token.getExempt(creator)
+    let tx = await this.token.transfer(other, 100 * Math.pow(10, 8))
+    let exemptStatusAfterTransfer = await this.token.getExempt(creator)
 
-    expect(receipt.transactionHash).to.have.string('0x')
+    expect(tx.receipt.transactionHash).to.have.string('0x')
     expect(await this.token.balanceOf(other)).to.be.bignumber.greaterThan(initialBalOther)
     expect(await this.token.balanceOf(creator)).to.be.bignumber.lessThan(initialBalCreator)
+
+    let grCreator = await this.token.getGenesisRecord(creator)
+    let grOther = await this.token.getGenesisRecord(other)
+
+    expect(exemptStatusBeforeTransfer).to.be.false
+    expect(exemptStatusAfterTransfer).to.be.false
+    expect(await this.token.balanceOf(creator)).to.be.bignumber.equal(grCreator.balance)
+    expect(await this.token.balanceOf(other)).to.be.bignumber.equal(grOther.balance)
+    expect(parseInt(grCreator.timestamp)).to.be.lessThan(Date.now())
+    expect(parseInt(grOther.timestamp)).to.be.lessThan(Date.now())
     expect(await this.token.balanceOf(reserveAddr)).to.be.bignumber.greaterThan(initialBalReserveAddr)
   })
 
-  it('should successfully approve the spender `other`', async function () {
-    let { tx, receipt } = await this.token.approve(other, 100000000)
-    expect(tx).to.have.string('0x')
-    expect(receipt.transactionHash).to.have.string('0x')
+  it('should reflect the right amount and timestamps in the genesis record after multiple transfers', async function () {
+    let reserveAddr = await this.token.getReserve()
+    let initialBalReserveAddr = await this.token.balanceOf(reserveAddr)
+
+    // first transfer
+    let timePreTransfer0 = Date.now()
+    let milliseconds0 = new Date(timePreTransfer0)
+
+    await this.token.transfer(other, '100000000000000000000000000')
+    let grCreator0 = await this.token.getGenesisRecord(creator)
+    let grOther0 = await this.token.getGenesisRecord(other)
+    let creatorBal0 = await this.token.balanceOf(creator)
+    let resrvBal0 = await this.token.balanceOf(reserveAddr)
+
+    // second transfer
+    let timePreTransfer1 = Date.now()
+    let milliseconds1 = new Date(timePreTransfer1)
+
+    await this.token.transfer(other, '50000000000000000000000000')
+    let grCreator1 = await this.token.getGenesisRecord(creator)
+    let grOther1 = await this.token.getGenesisRecord(other)
+    let resrvBal1 = await this.token.balanceOf(reserveAddr)
+    let creatorBal1 = await this.token.balanceOf(creator)
+
+    expect(parseInt(grCreator0.timestamp)).to.be.equal(parseInt(grOther0.timestamp))
+    expect(parseInt(grOther1.timestamp)).to.be.equal(parseInt(grOther0.timestamp))
+    expect(parseInt(grCreator1.timestamp) >= parseInt(grCreator0.timestamp)).to.be.true
+    expect(parseInt(grOther0.timestamp)).to.be.equal(parseInt(grOther1.timestamp))
+    expect(parseInt(grCreator0.timestamp) >= (timePreTransfer0 - milliseconds0.getMilliseconds()) / 1000).to.be.true
+    expect(parseInt(grCreator0.timestamp) <= (timePreTransfer1 - milliseconds1.getMilliseconds()) / 1000).to.be.true
+    expect(await this.token.balanceOf(reserveAddr)).to.be.bignumber.greaterThan(initialBalReserveAddr)
+    expect(resrvBal0).to.be.bignumber.lessThan(resrvBal1)
+    expect(resrvBal0 > initialBalReserveAddr).to.be.true
+    expect(grCreator0.balance.toString()).to.be.equal(creatorBal0.toString())
+    expect(grCreator1.balance.toString()).to.be.equal(creatorBal1.toString())
+    expect(grOther1.balance).to.be.bignumber.greaterThan(grOther0.balance)
   })
 
   it('should grant authority to account `other` to spend from account `creator`', async function () {
@@ -177,25 +234,6 @@ contract('KaikenToken', async function ([creator, other]) {
     expect(await this.token.balanceOf(other)).to.be.bignumber.equal(otherBal) // unchanged
     expect(settledCreatorBal).to.be.bignumber.lessThan(creatorBal) // depreciated balance
 
-    expect(settledCreatorBal).to.be.bignumber.lessThan(creatorBal) // depreciated balance
-
     expect(await this.token.balanceOf(to)).to.be.bignumber.greaterThan(toBal) // appreciated balance
-    expect(await this.token.balanceOf(reserve)).to.be.bignumber.greaterThan(reserveBal) // appreciated balance due to paid taxes
-  })
-
-  it('should not tax an exempted account ', async function () {
-    await this.token.addExempt(creator)
-
-    let reserve = await this.token.getReserve()
-    let initialBalCreator = await this.token.balanceOf(creator)
-    let initialBalOther = await this.token.balanceOf(other)
-    let initialBalReserve = await this.token.balanceOf(reserve)
-
-    let { receipt } = await this.token.transfer(other, 100 * Math.pow(10, 8))
-
-    expect(receipt.transactionHash).to.have.string('0x')
-    expect(await this.token.balanceOf(creator)).to.be.bignumber.lessThan(initialBalCreator)
-    expect(await this.token.balanceOf(other)).to.be.bignumber.greaterThan(initialBalOther)
-    expect(await this.token.balanceOf(reserve)).to.be.bignumber.equal(initialBalReserve)
   })
 })

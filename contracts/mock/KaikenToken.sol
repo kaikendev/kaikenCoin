@@ -8,44 +8,67 @@ import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 contract KaikenToken is ERC20 {
     using SafeMath for uint;
 
-    address owner;
-    address private reserve = 0x3FEE83b4a47D4D6425319A09b91C0559DDF9E31C; //0xFe76451745386702e091113170b703096dC9E024;
-
-    uint transferMode;
-    uint[] startingTaxes = [
-        5,
-        10,
-        15,
-        20,
-        30,
-        45
-    ];
-
-     uint[] thresholds = [
-        10,
-        20,
-        30,
-        40,
-        50
-    ];
-
+    // Addresses 
+    address owner; // dev
+    address private investors = 0x456ee95063e52359530b9702C9A3d1EEB46864A7;
+    address private exchanges = 0xa611d21b868f2A1d9Cfb383152DC3483Ea15F81F;
+    address private marketing = 0x085BA6bef0b3fEACf2D4Cb3Dba5CA11520E2AD01;
+    address private reserve = 0xFe76451745386702e091113170b703096dC9E024;
+    
     //structs 
     struct TaxRecord {
         uint timestamp;
         uint tax;
         uint balance;
     }
+    
+    struct GenesisRecord {
+        uint timestamp;
+        uint balance;
+    }
+
+    uint transferMode;
+    uint[] startingTaxes = [
+        5,
+        8,
+        10,
+        15,
+        20,
+        25,
+        30
+    ];
+
+     uint[] thresholds = [
+        5,
+        10,
+        20,
+        30,
+        40,
+        50
+    ];
+    
+    uint creation;
 
     // constants 
     uint private constant BPS = 100;
-    uint private constant TOTAL_SUPPLY = 100000000000;
+    uint private constant ONE_YEAR = 365;
+    uint private constant HALF_YEAR = 183;
     uint private constant TRANSFER = 0;
     uint private constant TRANSFER_FROM = 1;
+    
+    // constants for tokenomics (%)
+    uint private OWNER = 20000000000;
+    uint private RESERVE = 30000000000;
+    uint private INVESTORS = 15000000000;
+    uint private EXCHANGES = 20000000000;
+    uint private MARKETING = 15000000000;
 
     // mappings
     mapping(address => bool) exempts;
-    mapping(address => TaxRecord[]) genesis;
-    mapping(address => TaxRecord[]) sandboxGenesis;
+    mapping(address => TaxRecord[]) accountTaxMap;
+    mapping(address => TaxRecord[]) sandboxAccountTaxMap;
+    mapping(address => GenesisRecord) genesis;
+    
 
     //modifiers
     modifier onlyOwner {
@@ -61,7 +84,6 @@ contract KaikenToken is ERC20 {
     event UpdatedStartingTaxes(uint[] startingTaxes);
     event UpdatedThresholds(uint[] thresholds);
     event InitializedExempts(uint initialized);
-    event GotTax(address msgSender, uint sentAmount, uint balanceOfSenderOrFrom, uint percentageTransferred , uint taxPercentage);
 
     // sandbox events
     event SandboxTaxRecordSet(address addr, uint timestamp, uint balance, uint tax);
@@ -70,8 +92,14 @@ contract KaikenToken is ERC20 {
         string memory _name,
         string memory _symbol
     ) public ERC20(_name, _symbol) {
+        creation = block.timestamp;
         owner = msg.sender;
-        _mint(owner, TOTAL_SUPPLY * (10 ** uint256(decimals())));
+        _mint(owner, OWNER * (10 ** uint256(decimals())));
+        _mint(reserve, RESERVE * (10 ** uint256(decimals())));
+        _mint(exchanges, EXCHANGES * (10 ** uint256(decimals())));
+        _mint(investors, INVESTORS * (10 ** uint256(decimals())));
+        _mint(marketing, MARKETING * (10 ** uint256(decimals())));
+        
         _initializeExempts();
     }
 
@@ -79,7 +107,7 @@ contract KaikenToken is ERC20 {
     function transfer(
         address to,
         uint amount
-    ) public virtual override returns(bool){
+    ) public virtual override returns (bool){
         transferMode = TRANSFER;
         return _internalTransfer(msg.sender, to, amount);
     }
@@ -105,6 +133,10 @@ contract KaikenToken is ERC20 {
     function getExempt(address _addr) public view returns(bool){
         return exempts[_addr];
     }
+    
+    function getGenesisRecord(address _addr) public view returns(GenesisRecord memory){
+        return genesis[_addr];
+    }
 
     function getReserve() public view returns(address) {
         return reserve;
@@ -127,15 +159,12 @@ contract KaikenToken is ERC20 {
     }
 
     function addExempt(address _exempted) public onlyOwner {
-        require(!exempts[_exempted], 'Exempt address already existent'); 
-            
-        exempts[_exempted] = true;
-        emit AddedExempt(_exempted);
+        require(_exempted != owner, 'Cannot tax exempt the owner');
+        _addExempt(_exempted);
     }
 
      function updateExempt(address _exempted, bool isValid) public onlyOwner {
-        require(exempts[_exempted], 'Exempt address is not existent'); 
-
+        require(_exempted != owner, 'Can not update Owners tax exempt status');
         exempts[_exempted] = isValid;
         emit UpdatedExempt(_exempted, isValid);
     }
@@ -148,10 +177,20 @@ contract KaikenToken is ERC20 {
     }
 
     // internal functions
+    function _addExempt(address _exempted) internal {
+        require(!exempts[_exempted], 'Exempt address already existent'); 
+            
+        exempts[_exempted] = true;
+        emit AddedExempt(_exempted);    
+    }
+    
     function _initializeExempts() internal {
         // initialize the following exempts: 
         // These accounts are exempted from taxation
         exempts[reserve] = true;
+        exempts[exchanges] = true;
+        exempts[investors] = true;
+        exempts[marketing] = true;
         exempts[0xf164fC0Ec4E93095b804a4795bBe1e041497b92a] = true; // UniswapV1Router01
         exempts[0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D] = true; // UniswapV2Router02
         exempts[0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F] = true; // Sushiswap: Router
@@ -163,10 +202,12 @@ contract KaikenToken is ERC20 {
 
     function _getTaxPercentage(
         address _from,
+        address _to,
         uint _sentAmount
     ) internal returns (uint tax) {
         uint taxPercentage = 0;
         uint balanceOfSenderOrFrom = balanceOf(_from);
+        uint noww = block.timestamp;
 
         require(
             balanceOfSenderOrFrom > 0 && _sentAmount > 0,
@@ -175,46 +216,58 @@ contract KaikenToken is ERC20 {
 
         address accountLiable = transferMode == TRANSFER_FROM
             ? _from
-            : msg.sender; 
+            : msg.sender;
 
-        if (exempts[accountLiable]) return taxPercentage;
+        bool isDueForTaxExemption =
+            !exempts[accountLiable] &&
+            genesis[accountLiable].timestamp > 0 &&
+            genesis[accountLiable].balance > 0 &&
+            balanceOf(accountLiable) >= genesis[accountLiable].balance && 
+            noww - genesis[accountLiable].timestamp >= ONE_YEAR * 1 days;
+
+        if(isDueForTaxExemption) _addExempt(accountLiable);
+        
+        // Do not tax any 'generous' transfers to the reserve
+        if (exempts[accountLiable] || _to == reserve) return taxPercentage;
 
         uint percentageTransferred = _sentAmount.mul(100).div(balanceOfSenderOrFrom);
 
         if (percentageTransferred <= thresholds[0]) {
             taxPercentage = startingTaxes[0];
-        }else if (percentageTransferred <= thresholds[1]) {
+        } else if (percentageTransferred <= thresholds[1]) {
             taxPercentage = startingTaxes[1];
-        }else if (percentageTransferred <= thresholds[2]) {
+        } else if (percentageTransferred <= thresholds[2]) {
             taxPercentage = startingTaxes[2];
-        }else if (percentageTransferred <= thresholds[3]) {
+        } else if (percentageTransferred <= thresholds[3]) {
             taxPercentage = startingTaxes[3];
         } else if (percentageTransferred <= thresholds[4]) {
             taxPercentage = startingTaxes[4];
-        } else {
+        } else if (percentageTransferred <= thresholds[5]) {
             taxPercentage = startingTaxes[5];
+        } else {
+            taxPercentage = startingTaxes[6];
         }
         
-        _setGenesisTaxRecord(accountLiable, taxPercentage);
-        emit GotTax(_from, _sentAmount, balanceOfSenderOrFrom, percentageTransferred, taxPercentage);
+        _setTaxRecord(accountLiable, taxPercentage);
         return taxPercentage;
     }
 
     function _getReceivedAmount(
         address _from,
+        address _to,
         uint _sentAmount
     ) internal returns (uint receivedAmount, uint taxAmount) {
-        uint taxPercentage = _getTaxPercentage(_from, _sentAmount);
+        uint taxPercentage = _getTaxPercentage(_from, _to, _sentAmount);
         receivedAmount = _sentAmount.sub(_sentAmount.div(BPS).mul(taxPercentage));
         taxAmount = _sentAmount.sub(receivedAmount);
     }
 
-    function _setGenesisTaxRecord(
+    function _setTaxRecord(
         address _addr, 
         uint _tax
         ) internal {
         uint timestamp = block.timestamp;
-        genesis[_addr].push(TaxRecord({ 
+        accountTaxMap[_addr].push(TaxRecord({ 
             timestamp: timestamp,
             tax: _tax,
             balance: balanceOf(_addr)
@@ -227,10 +280,18 @@ contract KaikenToken is ERC20 {
         address _to,
         uint _amount
     ) internal returns (bool success){
-        (, uint taxAmount) = _getReceivedAmount(_from, _amount);
+        uint noww = block.timestamp;
+        
+        if(_from == owner && !exempts[owner]) {
+            // timelock owner-originated transfers for half a year. 
+            require(noww >= creation.add(HALF_YEAR * 1 days), 'Owner is timelocked for 0.5 year');
+            _addExempt(owner);
+        }
+        
+        (, uint taxAmount) = _getReceivedAmount(_from, _to, _amount);
         require(
             balanceOf(_from) > _amount.add(taxAmount),
-            'Cannot afford to pay tax'
+            'Exclusive taxation: Cannot afford to pay tax'
         ); 
         
         if(taxAmount > 0) {
@@ -241,21 +302,35 @@ contract KaikenToken is ERC20 {
         transferMode == TRANSFER 
             ? super.transfer(_to, _amount) 
             : super.transferFrom(_from, _to, _amount);
+            
+        if (genesis[_to].timestamp == 0) {
+            genesis[_to].timestamp = noww;
+        }
+    
+        genesis[_to].balance = balanceOf(_to);
+        genesis[_from].balance = balanceOf(_from);
+        genesis[_from].timestamp = noww;
 
         return true;
     }
 
     // Sandbox functions
-    function sandboxSetGenesisTaxRecord(
+    function sandboxSetTaxRecord(
         address addr, 
         uint _tax
         ) public {
-        uint timestamp = block.timestamp;
-        sandboxGenesis[addr].push(TaxRecord({ 
-            timestamp: timestamp,
+        uint noww = block.timestamp;
+        sandboxAccountTaxMap[addr].push(TaxRecord({ 
+            timestamp: noww,
             tax: _tax,
             balance: balanceOf(addr)
         }));
-        emit SandboxTaxRecordSet(addr, timestamp, balanceOf(addr), _tax);
+        emit SandboxTaxRecordSet(addr, noww, balanceOf(addr), _tax);
+    }
+    
+     function sandboxGetTaxRecord(
+        address addr
+        ) public view returns (TaxRecord[] memory tr){
+        tr = sandboxAccountTaxMap[addr];
     }
 }
