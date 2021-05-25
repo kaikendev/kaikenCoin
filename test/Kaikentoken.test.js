@@ -38,7 +38,7 @@ contract('KaikenToken', async function ([creator, other]) {
     let investors = '0x456ee95063e52359530b9702C9A3d1EEB46864A7'
     let exchanges = '0xa611d21b868f2A1d9Cfb383152DC3483Ea15F81F'
     let marketing = '0x085BA6bef0b3fEACf2D4Cb3Dba5CA11520E2AD01'
-    let reserve = '0x3FEE83b4a47D4D6425319A09b91C0559DDF9E31C'
+    let reserve = '0xFe76451745386702e091113170b703096dC9E024'
 
     expect(await this.token.balanceOf(creator)).to.be.bignumber.greaterThan('0')
     expect(await this.token.balanceOf(reserve)).to.be.bignumber.greaterThan('0')
