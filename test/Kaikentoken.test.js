@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: MIT
-
 // Based on https://github.com/OpenZeppelin/openzeppelin-solidity/blob/v2.5.1/test/examples/Kaiken.test.js
 
 const { expect } = require('chai')
@@ -21,7 +20,7 @@ contract('KaikenToken', async function ([creator, other]) {
     this.token = await KaikenToken.new(NAME, SYMBOL, { from: creator })
   })
 
-  it('retrieve returns a value previously stored', async function () {
+  it('returns a value previously stored', async function () {
     // Use large integer comparisons
     expect(await this.token.totalSupply()).to.be.bignumber.equal(TOTAL_SUPPLY)
   })
@@ -75,24 +74,50 @@ contract('KaikenToken', async function ([creator, other]) {
   })
 
   it('should add an exempt', async function () {
-    let tx = await this.token.addExempt(other)
+    let tx = await this.token.addExempt(other, false)
     await truffleAssert.eventEmitted(tx, 'AddedExempt', (ev) => {
       return ev.exempted == other
     })
   })
 
   it('should remove an exempt', async function () {
-    await this.token.addExempt(other)
+    await this.token.addExempt(other, false)
     let tx = await this.token.removeExempt(other)
     await truffleAssert.eventEmitted(tx, 'RemovedExempt', (ev) => {
       return ev.exempted == other
     })
   })
 
+  it('should add a total exempt', async function () {
+    let tx = await this.token.addExempt(other, true)
+    await truffleAssert.eventEmitted(tx, 'AddedExempt', (ev) => {
+      return ev.exempted == other
+    })
+  })
+
+  it('should remove a total exempt', async function () {
+    await this.token.addExempt(other, true)
+    let tx = await this.token.removeTotalExempt(other)
+    await truffleAssert.eventEmitted(tx, 'RemovedTotalExempt', (ev) => {
+      return ev.exempted == other
+    })
+  })
+
   it('should update an exempt', async function () {
-    await this.token.addExempt(other)
+    await this.token.addExempt(other, false)
     let tx = await this.token.updateExempt(other, false)
     await truffleAssert.eventEmitted(tx, 'UpdatedExempt', (ev) => {
+      return (
+        ev.exempted == other &&
+        !ev.isValid
+      )
+    })
+  })
+
+  it('should update a total exempt', async function () {
+    await this.token.addExempt(other, true)
+    let tx = await this.token.updateTotalExempt(other, false)
+    await truffleAssert.eventEmitted(tx, 'UpdatedTotalExempt', (ev) => {
       return (
         ev.exempted == other &&
         !ev.isValid
@@ -119,7 +144,6 @@ contract('KaikenToken', async function ([creator, other]) {
 
   // The following tests involve transfers, and would fail UNLESS the Owner/Creator
   // is not timelocked.
-
   it('should transfer tokens successfully', async function () {
     let initialBalCreator = await this.token.balanceOf(creator)
     let initialBalOther = await this.token.balanceOf(other)
@@ -200,11 +224,9 @@ contract('KaikenToken', async function ([creator, other]) {
 
     let allowedAmount = 100000
     let to = '0x73Fc15691e3F3f5322271bbB97d65D7bc456D1A1'
-    let reserve = await this.token.getReserve()
     let toBal = await this.token.balanceOf(to)
     let otherBal = await this.token.balanceOf(other)
     let creatorBal = await this.token.balanceOf(creator)
-    let reserveBal = await this.token.balanceOf(reserve)
 
     let { receipt: approvalReceiptOther } = await this.token.approve(
       other,
@@ -233,7 +255,22 @@ contract('KaikenToken', async function ([creator, other]) {
     expect(transferFromReceipt.transactionHash).to.have.string('0x')
     expect(await this.token.balanceOf(other)).to.be.bignumber.equal(otherBal) // unchanged
     expect(settledCreatorBal).to.be.bignumber.lessThan(creatorBal) // depreciated balance
-
     expect(await this.token.balanceOf(to)).to.be.bignumber.greaterThan(toBal) // appreciated balance
+  })
+
+  it('should not tax a transfer to a total exempt account', async function () {
+    await this.token.addExempt(other, true)
+
+    let reserve = await this.token.getReserve()
+    let reserveBal0 = await this.token.balanceOf(reserve)
+    let creatorBal0 = await this.token.balanceOf(creator)
+
+    await this.token.transfer(other, 100000 * Math.pow(10, 8))
+
+    let reserveBal1 = await this.token.balanceOf(reserve)
+    let creatorBal1 = await this.token.balanceOf(creator)
+
+    expect(creatorBal0.sub(creatorBal1)).to.be.bignumber.equal(await this.token.balanceOf(other))
+    expect(reserveBal0).to.be.bignumber.equal(reserveBal1)
   })
 })
