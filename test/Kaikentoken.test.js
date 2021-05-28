@@ -47,13 +47,16 @@ contract('KaikenToken', async function ([creator, other]) {
   })
 
   it('should return some initialized exempts', async function () {
-    let reserve = await this.token.getReserve()
     let uniswapv2Router02 = '0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D'
-    expect(await this.token.getExempt(reserve)).to.be.true
     expect(await this.token.getExempt(uniswapv2Router02)).to.be.true
   })
 
-  it('creator should be not be exempted from taxation', async function () {
+  it('should return some initialized total exempts', async function () {
+    let reserve = await this.token.getReserve()
+    expect(await this.token.getTotalExempt(reserve)).to.be.true
+  })
+
+  it('creator should not be exempted from taxation', async function () {
     expect(await this.token.getExempt(creator)).to.be.false
   })
 

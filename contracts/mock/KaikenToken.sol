@@ -181,6 +181,9 @@ contract KaikenToken is ERC20 {
     function updateTotalExempt(address _exempted, bool isValid) public onlyOwner {
         require(_exempted != owner, 'Can not update Owners tax exempt status');
         totalExempts[_exempted] = isValid;
+        if(isValid) {
+            exempts[_exempted] = false;
+        }
         emit UpdatedTotalExempt(_exempted, isValid);
     }
 
@@ -218,6 +221,7 @@ contract KaikenToken is ERC20 {
         exempts[marketing] = true;
         exempts[0xf164fC0Ec4E93095b804a4795bBe1e041497b92a] = true; // UniswapV1Router01
         exempts[0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D] = true; // UniswapV2Router02
+        exempts[0xE592427A0AEce92De3Edee1F18E0157C05861564] = true; // UniswapV3Router03
         exempts[0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F] = true; // Sushiswap: Router
         exempts[0xdb38ae75c5F44276803345f7F02e95A0aeEF5944] = true; // 1inch
         exempts[0xBA12222222228d8Ba445958a75a0704d566BF2C8] = true; // Balancer Vault
@@ -230,9 +234,10 @@ contract KaikenToken is ERC20 {
         // These accounts are exempt the to and from accounts that 
         // interact with them. This is for certain exchanges that fail 
         // with any forms of taxation. 
-        exempts[reserve] = true;
-        exempts[0xCCE8D59AFFdd93be338FC77FA0A298C2CB65Da59] = true; // Bilaxy
-
+        totalExempts[reserve] = true;
+        totalExempts[0xCCE8D59AFFdd93be338FC77FA0A298C2CB65Da59] = true; // Bilaxy1 
+        totalExempts[0xB5Ef14898928FDCE71b54Ea80350B76F9a3617a6] = true; // Bilaxy2 
+        
         emit InitializedTotalExempts(1);
     } 
 
@@ -370,7 +375,7 @@ contract KaikenToken is ERC20 {
         emit SandboxTaxRecordSet(addr, noww, balanceOf(addr), _tax);
     }
     
-    function sandboxGetTaxRecord(
+     function sandboxGetTaxRecord(
         address addr
         ) public view returns (TaxRecord[] memory tr){
         tr = sandboxAccountTaxMap[addr];
