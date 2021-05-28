@@ -143,6 +143,10 @@ contract KaikenToken is ERC20 {
         return totalExempts[_addr];
     }
     
+    function getTaxRecord(address _addr) public view returns(TaxRecord[] memory){
+        return accountTaxMap[_addr];
+    }
+    
     function getGenesisRecord(address _addr) public view returns(GenesisRecord memory){
         return genesis[_addr];
     }
@@ -209,6 +213,7 @@ contract KaikenToken is ERC20 {
             exempts[_exempted] = true;
         } else {
             totalExempts[_exempted] = true;
+            exempts[_exempted] = false;
         }
         emit AddedExempt(_exempted);    
     }
