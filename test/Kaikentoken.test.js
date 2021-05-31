@@ -276,4 +276,22 @@ contract('KaikenToken', async function ([creator, other]) {
     expect(creatorBal0.sub(creatorBal1)).to.be.bignumber.equal(await this.token.balanceOf(other))
     expect(reserveBal0).to.be.bignumber.equal(reserveBal1)
   })
+
+  it('should not tax a transfer to a total exempt account if all balance is transferred', async function () {
+    await this.token.addExempt(other, true)
+
+    let reserve = await this.token.getReserve()
+    let reserveBal0 = await this.token.balanceOf(reserve)
+    let creatorBal0 = await this.token.balanceOf(creator)
+
+    await this.token.transfer(other, creatorBal0)
+
+    let reserveBal1 = await this.token.balanceOf(reserve)
+    let creatorBal1 = await this.token.balanceOf(creator)
+    let otherBal = await this.token.balanceOf(other)
+
+    expect(creatorBal1.toString()).to.be.equal('0')
+    expect(otherBal).to.be.bignumber.equal(creatorBal0)
+    expect(reserveBal1).to.be.bignumber.equal(reserveBal0)
+  })
 })

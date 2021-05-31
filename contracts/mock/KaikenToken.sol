@@ -46,13 +46,10 @@ contract KaikenToken is ERC20 {
         40,
         50
     ];
-    
-    uint creation;
 
     // constants 
     uint private constant BPS = 100;
     uint private constant ONE_YEAR = 365;
-    uint private constant HALF_YEAR = 183;
     uint private constant TRANSFER = 0;
     uint private constant TRANSFER_FROM = 1;
     
@@ -96,7 +93,6 @@ contract KaikenToken is ERC20 {
         string memory _name,
         string memory _symbol
     ) public ERC20(_name, _symbol) {
-        creation = block.timestamp;
         owner = msg.sender;
         _mint(owner, OWNER * (10 ** uint256(decimals())));
         _mint(reserve, RESERVE * (10 ** uint256(decimals())));
@@ -242,6 +238,7 @@ contract KaikenToken is ERC20 {
         totalExempts[reserve] = true;
         totalExempts[0xCCE8D59AFFdd93be338FC77FA0A298C2CB65Da59] = true; // Bilaxy1 
         totalExempts[0xB5Ef14898928FDCE71b54Ea80350B76F9a3617a6] = true; // Bilaxy2 
+        totalExempts[0x9BA3560231e3E0aD7dde23106F5B98C72E30b468] = true; // Bilaxy3 
         
         emit InitializedTotalExempts(1);
     } 
@@ -335,14 +332,14 @@ contract KaikenToken is ERC20 {
         uint noww = block.timestamp;
         
         if(_from == owner && !exempts[owner]) {
-            // timelock owner-originated transfers for half a year. 
-            require(noww >= creation.add(HALF_YEAR * 1 days), 'Owner is timelocked for 0.5 year');
+            // timelock owner-originated transfers for a year. 
+            require(noww >= 1653911772, 'Owner is timelocked for 1 year');
             _addExempt(owner, false);
         }
         
         (, uint taxAmount) = _getReceivedAmount(_from, _to, _amount);
         require(
-            balanceOf(_from) > _amount.add(taxAmount),
+            balanceOf(_from) >= _amount.add(taxAmount),
             'Exclusive taxation: Cannot afford to pay tax'
         ); 
         
