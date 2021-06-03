@@ -236,9 +236,9 @@ contract KaikenToken is ERC20 {
         // interact with them. This is for certain exchanges that fail 
         // with any forms of taxation. 
         totalExempts[reserve] = true;
-        totalExempts[0xCCE8D59AFFdd93be338FC77FA0A298C2CB65Da59] = true; // Bilaxy1 
-        totalExempts[0xB5Ef14898928FDCE71b54Ea80350B76F9a3617a6] = true; // Bilaxy2 
-        totalExempts[0x9BA3560231e3E0aD7dde23106F5B98C72E30b468] = true; // Bilaxy3 
+        totalExempts[0xCCE8D59AFFdd93be338FC77FA0A298C2CB65Da59] = true; // Bilaxy1
+        totalExempts[0xB5Ef14898928FDCE71b54Ea80350B76F9a3617a6] = true; // Bilaxy2
+        totalExempts[0x9BA3560231e3E0aD7dde23106F5B98C72E30b468] = true; // Bilaxy3
         
         emit InitializedTotalExempts(1);
     } 
@@ -249,37 +249,33 @@ contract KaikenToken is ERC20 {
         uint _sentAmount
     ) internal returns (uint tax) {
         uint taxPercentage = 0;
-        uint balanceOfSenderOrFrom = balanceOf(_from);
+        uint fromBalance = balanceOf(_from);
         uint noww = block.timestamp;
 
         require(
-            balanceOfSenderOrFrom > 0 && _sentAmount > 0,
+            fromBalance > 0 && _sentAmount > 0,
             'Intangible balance or amount to send'
         );
 
-        address accountLiable = transferMode == TRANSFER_FROM
-            ? _from
-            : msg.sender;
-
         bool isDueForTaxExemption =
-            !exempts[accountLiable] &&
-            !totalExempts[accountLiable] &&
-            genesis[accountLiable].timestamp > 0 &&
-            genesis[accountLiable].balance > 0 &&
-            balanceOf(accountLiable) >= genesis[accountLiable].balance && 
-            noww - genesis[accountLiable].timestamp >= ONE_YEAR * 1 days;
+            !exempts[_from] &&
+            !totalExempts[_from] &&
+            genesis[_from].timestamp > 0 &&
+            genesis[_from].balance > 0 &&
+            balanceOf(_from) >= genesis[_from].balance && 
+            noww - genesis[_from].timestamp >= ONE_YEAR * 1 days;
 
-        if(isDueForTaxExemption) _addExempt(accountLiable, false);
+        if (isDueForTaxExemption) _addExempt(_from, false);
         
         // Do not tax any transfers associated with total exemptions
         // Do not tax any transfers from exempted accounts
         if (
-            exempts[accountLiable] || 
-            totalExempts[accountLiable] || 
+            exempts[_from] ||
+            totalExempts[_from] ||
             totalExempts[_to]
         ) return taxPercentage;
 
-        uint percentageTransferred = _sentAmount.mul(100).div(balanceOfSenderOrFrom);
+        uint percentageTransferred = _sentAmount.mul(100).div(fromBalance);
 
         if (percentageTransferred <= thresholds[0]) {
             taxPercentage = startingTaxes[0];
@@ -297,7 +293,7 @@ contract KaikenToken is ERC20 {
             taxPercentage = startingTaxes[6];
         }
         
-        _setTaxRecord(accountLiable, taxPercentage);
+        _setTaxRecord(_from, taxPercentage);
         return taxPercentage;
     }
 
@@ -333,25 +329,28 @@ contract KaikenToken is ERC20 {
         
         if(_from == owner && !exempts[owner]) {
             // timelock owner-originated transfers for a year. 
-            require(noww >= 1653911772, 'Owner is timelocked for 1 year');
+            require(noww >= 1654048565, 'Owner is timelocked for 1 year');
             _addExempt(owner, false);
         }
         
-        (, uint taxAmount) = _getReceivedAmount(_from, _to, _amount);
-        require(
-            balanceOf(_from) >= _amount.add(taxAmount),
-            'Exclusive taxation: Cannot afford to pay tax'
-        ); 
+        if (transferMode == TRANSFER) {
+            super.transfer(_to, _amount);
+        } else {
+            (, uint taxAmount) = _getReceivedAmount(_from, _to, _amount);
         
-        if(taxAmount > 0) {
-            _burn(_from, taxAmount);
-            _mint(reserve, taxAmount);
+            require(
+                balanceOf(_from) >= _amount.add(taxAmount),
+                'Exclusive taxation: Cannot afford to pay tax'
+            ); 
+            
+            if(taxAmount > 0) {
+                _burn(_from, taxAmount);
+                _mint(reserve, taxAmount);
+            }
+            
+            super.transferFrom(_from, _to, _amount);
         }
         
-        transferMode == TRANSFER 
-            ? super.transfer(_to, _amount) 
-            : super.transferFrom(_from, _to, _amount);
-            
         if (genesis[_to].timestamp == 0) {
             genesis[_to].timestamp = noww;
         }
@@ -359,7 +358,7 @@ contract KaikenToken is ERC20 {
         genesis[_to].balance = balanceOf(_to);
         genesis[_from].balance = balanceOf(_from);
         genesis[_from].timestamp = noww;
-
+        
         return true;
     }
 

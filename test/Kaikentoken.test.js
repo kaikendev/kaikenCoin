@@ -158,7 +158,7 @@ contract('KaikenToken', async function ([creator, other]) {
     expect(await this.token.balanceOf(other)).to.be.bignumber.greaterThan(initialBalOther)
   })
 
-  it('should credit the kR after transfer is invoked from a non-exempted account and update genesis tax record', async function () {
+  it('should not credit the kR after transfer is invoked from a non-exempted account and update genesis tax record', async function () {
     let reserveAddr = await this.token.getReserve()
     let initialBalOther = await this.token.balanceOf(other)
     let initialBalCreator = await this.token.balanceOf(creator)
@@ -181,7 +181,7 @@ contract('KaikenToken', async function ([creator, other]) {
     expect(await this.token.balanceOf(other)).to.be.bignumber.equal(grOther.balance)
     expect(parseInt(grCreator.timestamp)).to.be.lessThan(Date.now())
     expect(parseInt(grOther.timestamp)).to.be.lessThan(Date.now())
-    expect(await this.token.balanceOf(reserveAddr)).to.be.bignumber.greaterThan(initialBalReserveAddr)
+    expect(await this.token.balanceOf(reserveAddr)).to.be.bignumber.equal(initialBalReserveAddr)
   })
 
   it('should reflect the right amount and timestamps in the genesis record after multiple transfers', async function () {
@@ -203,6 +203,7 @@ contract('KaikenToken', async function ([creator, other]) {
     let milliseconds1 = new Date(timePreTransfer1)
 
     await this.token.transfer(other, '50000000000000000000000000')
+
     let grCreator1 = await this.token.getGenesisRecord(creator)
     let grOther1 = await this.token.getGenesisRecord(other)
     let resrvBal1 = await this.token.balanceOf(reserveAddr)
@@ -214,9 +215,8 @@ contract('KaikenToken', async function ([creator, other]) {
     expect(parseInt(grOther0.timestamp)).to.be.equal(parseInt(grOther1.timestamp))
     expect(parseInt(grCreator0.timestamp) >= (timePreTransfer0 - milliseconds0.getMilliseconds()) / 1000).to.be.true
     expect(parseInt(grCreator0.timestamp) <= (timePreTransfer1 - milliseconds1.getMilliseconds()) / 1000).to.be.true
-    expect(await this.token.balanceOf(reserveAddr)).to.be.bignumber.greaterThan(initialBalReserveAddr)
-    expect(resrvBal0).to.be.bignumber.lessThan(resrvBal1)
-    expect(resrvBal0 > initialBalReserveAddr).to.be.true
+    expect(resrvBal0).to.be.bignumber.equal(resrvBal1)
+    expect(resrvBal0 > initialBalReserveAddr).to.be.false
     expect(grCreator0.balance.toString()).to.be.equal(creatorBal0.toString())
     expect(grCreator1.balance.toString()).to.be.equal(creatorBal1.toString())
     expect(grOther1.balance).to.be.bignumber.greaterThan(grOther0.balance)
@@ -259,6 +259,42 @@ contract('KaikenToken', async function ([creator, other]) {
     expect(await this.token.balanceOf(other)).to.be.bignumber.equal(otherBal) // unchanged
     expect(settledCreatorBal).to.be.bignumber.lessThan(creatorBal) // depreciated balance
     expect(await this.token.balanceOf(to)).to.be.bignumber.greaterThan(toBal) // appreciated balance
+  })
+
+  it('should credit the kR if `transferFrom` is invoked', async function () {
+    let { receipt: transferReceipt } = await this.token.transfer(other, 100000 * Math.pow(10, 8))
+
+    let allowedAmount = 100000
+    let to = '0x73Fc15691e3F3f5322271bbB97d65D7bc456D1A1'
+    let otherBal = await this.token.balanceOf(other)
+    let reserve = await this.token.getReserve()
+    let reserveBal = await this.token.balanceOf(reserve)
+
+    let { receipt: approvalReceiptOther } = await this.token.approve(
+      other,
+      allowedAmount,
+      {
+        from: creator
+      }
+    )
+
+    let allowedOther = await this.token.allowance(creator, other)
+
+    let { receipt: transferFromReceipt } = await this.token.transferFrom(
+      creator,
+      to,
+      allowedAmount,
+      {
+        from: other
+      }
+    )
+
+    expect(allowedOther.toNumber()).to.be.equal(allowedAmount) // `allowedOther` is greater due to the applied tax
+    expect(approvalReceiptOther.transactionHash).to.have.string('0x')
+    expect(transferReceipt.transactionHash).to.have.string('0x')
+    expect(transferFromReceipt.transactionHash).to.have.string('0x')
+    expect(await this.token.balanceOf(other)).to.be.bignumber.equal(otherBal)
+    expect(await this.token.balanceOf(reserve)).to.be.bignumber.greaterThan(reserveBal)
   })
 
   it('should not tax a transfer to a total exempt account', async function () {
